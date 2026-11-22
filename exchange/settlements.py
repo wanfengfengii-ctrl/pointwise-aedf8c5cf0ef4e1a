@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from day.allocations import get_issued_grant
 from day.balance import credit_hub
+from day.handoff import SETTLE, record_handoff_event
 from day.store import decode_int, encode_int
 from exchange.documents import ReturnDocument, dump_return, load_return, validate_return_document
 
@@ -28,6 +29,11 @@ def _read_settlement(row):
                             decode_int(row['restored_through']), decode_int(row['available_after']))
 
 
+def find_settlement(db, request_id):
+    row = db.execute('SELECT * FROM settlements WHERE request_id = ?', (request_id,)).fetchone()
+    return None if row is None else _read_settlement(row)
+
+
 def list_day_settlements(db, station_day):
     rows = db.execute('''SELECT s.* FROM settlements s JOIN issued_grants g ON s.grant_id = g.grant_id
         WHERE g.station = ? AND g.business_day = ? ORDER BY s.request_id''', station_day.key)
@@ -48,12 +54,11 @@ def settle_return(store, document, *, before_commit=None):
         issued = get_issued_grant(db, binding.grant_id)
         if issued != binding:
             raise ValueError('退额凭据没有匹配的总仓原划拨')
-        saved = db.execute('SELECT * FROM settlements WHERE request_id = ?', (document.request_id,)).fetchone()
+        saved = find_settlement(db, document.request_id)
         if saved is not None:
-            result = _read_settlement(saved)
-            if result.document != document:
+            if saved.document != document:
                 raise ValueError('同号退额已受理不同凭据')
-            return result
+            return saved
         previous = _restored_through(db, binding.grant_id)
         covered = max(previous, document.cumulative_rows)
         added = covered - previous
@@ -62,6 +67,7 @@ def settle_return(store, document, *, before_commit=None):
             document.request_id, binding.grant_id, dump_return(document),
             encode_int(added), encode_int(covered), encode_int(available)
         ))
+        record_handoff_event(db, binding.station_day, SETTLE, document.request_id)
         if before_commit is not None:
             before_commit()
         return SettlementResult(document, added, covered, available)

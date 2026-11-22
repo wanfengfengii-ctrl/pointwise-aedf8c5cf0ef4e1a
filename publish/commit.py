@@ -1,3 +1,4 @@
+from day.handoff import RELEASE, record_handoff_event
 from publish.prepare import PreparedBatch, prepare_batch, prepare_in_snapshot
 from publish.receipts import load_receipt, make_release_receipt, store_receipt
 from publish.records import ReleaseRecord, find_release, find_release_for_batch, store_release
@@ -26,6 +27,7 @@ def commit_prepared(store, prepared, *, before_commit=None):
         receipt = make_release_receipt(record, current.metrics, remaining)
         store_release(db, record)
         store_receipt(db, receipt)
+        record_handoff_event(db, batch.station_day, RELEASE, record.release_id)
         if before_commit is not None:
             before_commit()
         return record, receipt

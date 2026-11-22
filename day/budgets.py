@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from day.calendar import StationDay, check_station_day
+from day.handoff import OPEN, record_handoff_event
 from day.store import decode_int, encode_int
 
 
@@ -44,6 +45,7 @@ def open_day(store, station_day, limit):
         if saved is None:
             amount = encode_int(limit)
             db.execute('INSERT INTO budgets VALUES (?, ?, ?, ?)', (*station_day.key, amount, amount))
+            record_handoff_event(db, station_day, OPEN, '')
         elif saved.limit != limit:
             raise ValueError('本站日已用不同额度开账')
         return DayBudget(station_day, limit, limit)

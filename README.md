@@ -31,6 +31,9 @@ demo 使用临时目录内的两个 SQLite 库。它沿九步工作流程执行�
 | 分批退额 | `exchange.returns.return_quota(branch, day, grant_id, request_id, count)` | 正式退额凭据及当时分仓余量 |
 | 核销 | `exchange.settlements.settle_return(hub, document)` | 本件新增恢复量、累计覆盖范围及当时总仓余量 |
 | 领取与核账 | `audit.lookup.read_batch(store, release_id)`，`audit.snapshots.read_day_snapshot(store, day)`，`audit.reconcile.audit_day(day, hub_snapshot, branch_snapshot)` | 固定成果读视图、本地快照及两仓日账 |
+| 启用交班 | `day.workspaces.enable_handoff(store, day)` | `None`，须在本站日首笔正式变更之前 |
+| 导出交班件 | `audit.snapshots.read_handoff(store, day)` | 固定仓角色、仓名、对端、站日和当地截点的 `bytes` |
+| 断源核账 | `audit.reconcile.audit_handoff(day, hub_packet, branch_packet)` | 最晚联合前缀位置、两仓截点快照及联合日账组成的字典 |
 
 `key` 是两仓预配置的同一段至少 16 字节的可信交接密钥。V1 的每个仓库文件属于一个固定角色、仓名和对端。重开沿用原配置，两仓分别提交。凭据经过带类型区分的签记校验，绑定指定仓库和原划拨。可用 `exchange.documents` 的 `dump_grant`、`load_grant`、`dump_return`、`load_return` 往返传输文本，接纳及核销仍须执行相应业务接口。配置相同密钥的两仓是可信发行方。
 
@@ -39,3 +42,5 @@ demo 使用临时目录内的两个 SQLite 库。它沿九步工作流程执行�
 划拨号在总仓唯一，退额请求号在分仓唯一，报送号和成果号在各自仓库唯一。每份报送可正式发布一次。开账同参复领初始账，其他已成功请求同参复领原结果，异参以 `ValueError` 拒绝。准备项保留行批和额度身份，提交时才裁决可用额。同一划拨的分仓发布和正式退额都扣减当时可用余额。额度不足抛出 `day.balance.QuotaExceeded`。发布、退额及核销接受可选 `before_commit` 回调，回调抛出的异常使本次事务回滚。回执中的余量固定为当时提交结果。总仓当前余额用 `get_budget` 读取，两仓当前资格也出现在日账快照中。
 
 退额凭据携带本次行数和累计正式退出行数。后件可先按较大的累计范围恢复资格，随后到达且已覆盖的前件新增为零。重投返回原受理结果。核对使用完整仓库、站日和划拨归属，统计正式成果，分别列出尚未接纳的已发划拨和已退未恢复的行额度。`quota.difference` 为初始额度减去实发、两仓可用及在途额度。两份日账宜在同一业务停顿点采集。错站日或错仓组合拒绝，异时点交接差异可从 `quota.issues` 和差额查看。
+
+新站日可在两仓各自首笔正式业务前启用错峰交班，未启用的旧站日沿用原核账。启用后本地位置从 0 起，开账、划拨、接纳、发布、退额和核销在各自首次正式提交后加一；暂存和准备不计入，首次成功的空成果和零新增核销计入，失败及同参重投不推进。启用状态和已提交依据在重开后仍可读取，导出交班件不推进位置，已导出件不受后续提交影响。`audit_handoff` 离线核定不超过两件上界的最晚联合前缀：分仓接纳的确切划拨须在所选总仓前缀内签发，总仓核销的确切退额件须在所选分仓前缀内正式退回。账上只列该截点的原成果、原序读值、出处、计量、余额和逐划拨在途额度。站日、角色或仓库互指关系不匹配时拒绝。两条交班剧本和错峰对照见 `SHIFT_AUDIT.md` 与 `handoff_cases.py`。

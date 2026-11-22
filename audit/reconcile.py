@@ -1,6 +1,8 @@
 from collections import Counter
 from dataclasses import dataclass
 
+from audit.handoff import (branch_snapshot_at, hub_snapshot_at, parse_handoff_packet,
+                           select_joint_positions)
 from audit.snapshots import WarehouseDaySnapshot
 from audit.totals import SiteTotals, sum_release_metrics
 from day.calendar import StationDay, check_station_day
@@ -115,3 +117,25 @@ def audit_day(station_day, hub, branch):
     joint = SiteTotals(hub_totals.rows + branch_totals.rows, hub_totals.missing + branch_totals.missing,
                        hub_totals.litres + branch_totals.litres)
     return AuditDayResult(station_day, hub_totals, branch_totals, joint, quota)
+
+
+def audit_handoff(station_day, hub_packet, branch_packet):
+    check_station_day(station_day)
+    hub = parse_handoff_packet(hub_packet)
+    branch = parse_handoff_packet(branch_packet)
+    if (hub.role, branch.role) != ('hub', 'branch'):
+        raise ValueError('须提供总仓交班件和分仓交班件')
+    if hub.station_day != station_day or branch.station_day != station_day:
+        raise ValueError('两份交班件须与指定站日一致')
+    if (hub.warehouse_id, hub.peer_id) != (branch.peer_id, branch.warehouse_id):
+        raise ValueError('两份交班件的仓库归属不匹配')
+    hub_position, branch_position = select_joint_positions(hub, branch)
+    hub_snapshot = hub_snapshot_at(hub, hub_position)
+    branch_snapshot = branch_snapshot_at(branch, branch_position)
+    return {
+        'hub_position': hub_position,
+        'branch_position': branch_position,
+        'hub': hub_snapshot,
+        'branch': branch_snapshot,
+        'audit': audit_day(station_day, hub_snapshot, branch_snapshot),
+    }

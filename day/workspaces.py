@@ -1,5 +1,7 @@
 from day.allocations import ensure_allocation_schema
 from day.budgets import ensure_budget_schema
+from day.calendar import check_station_day
+from day.handoff import enable_handoff_day, ensure_handoff_schema
 from day.store import WarehouseStore
 from exchange.grants import ensure_grant_schema
 from exchange.returns import ensure_return_schema
@@ -16,6 +18,7 @@ def _initialize_hub(db):
     ensure_batch_schema(db)
     ensure_release_schema(db)
     ensure_receipt_schema(db)
+    ensure_handoff_schema(db)
 
 
 def _initialize_branch(db):
@@ -24,6 +27,7 @@ def _initialize_branch(db):
     ensure_batch_schema(db)
     ensure_release_schema(db)
     ensure_receipt_schema(db)
+    ensure_handoff_schema(db)
 
 
 def open_hub_store(path, hub_id, branch_id, key):
@@ -32,3 +36,10 @@ def open_hub_store(path, hub_id, branch_id, key):
 
 def open_branch_store(path, branch_id, hub_id, key):
     return WarehouseStore.open(path, 'branch', branch_id, hub_id, key, _initialize_branch)
+
+
+def enable_handoff(store, station_day):
+    check_station_day(station_day)
+    with store.write_transaction() as db:
+        enable_handoff_day(db, store.role, station_day)
+    return None

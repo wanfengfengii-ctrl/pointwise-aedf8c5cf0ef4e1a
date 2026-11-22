@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from day.balance import require_available
+from day.handoff import ACCEPT, record_handoff_event
 from day.store import decode_int, encode_int
 from exchange.documents import GrantDocument, dump_grant, load_grant, validate_grant_document
 
@@ -49,6 +50,7 @@ def accept_grant(store, document):
         db.execute('INSERT INTO accepted_grants VALUES (?, ?, ?, ?, ?)', (
             document.grant_id, *document.station_day.key, dump_grant(document), encode_int(document.rows)
         ))
+        record_handoff_event(db, document.station_day, ACCEPT, document.grant_id)
         return AcceptedGrant(document, document.rows)
 
 

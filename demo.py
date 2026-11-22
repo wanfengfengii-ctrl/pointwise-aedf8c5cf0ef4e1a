@@ -4,13 +4,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from audit.lookup import read_batch
-from audit.reconcile import audit_day
-from audit.snapshots import read_day_snapshot
+from audit.reconcile import audit_day, audit_handoff
+from audit.snapshots import read_day_snapshot, read_handoff
 from day.allocations import grant
 from day.balance import QuotaExceeded
 from day.budgets import get_budget, open_day
 from day.calendar import parse_station_day
-from day.workspaces import open_branch_store, open_hub_store
+from day.workspaces import enable_handoff, open_branch_store, open_hub_store
 from exchange.grants import accept_grant
 from exchange.returns import return_quota
 from exchange.settlements import settle_return
@@ -93,6 +93,75 @@ def run(directory):
                       '逐项换算得到 7、缺测、11。对照源行号 12、16、20。逐仓手加 23 与 18 升，保留两条缺测行。')
 
 
+def interrupt_commit():
+    raise RuntimeError('提交前中断')
+
+
+def run_shift_handoff(directory):
+    """错峰交班：两仓关闭后，仅凭交班件离线核定联合前缀、成果和在途量。"""
+    shift_day = parse_station_day('石桥站', '2026-11-22')
+    hub_path = directory / 'shift-hub.sqlite'
+    branch_path = directory / 'shift-north.sqlite'
+    with open_hub_store(hub_path, hub_id, branch_id, demo_key) as hub, \
+            open_branch_store(branch_path, branch_id, hub_id, demo_key) as branch:
+        enable_handoff(hub, shift_day)
+        enable_handoff(branch, shift_day)
+        open_day(hub, shift_day, 2)
+        g1 = grant(hub, shift_day, 'G1', branch_id, 2)
+        accept_grant(branch, g1)
+        r1 = return_quota(branch, shift_day, 'G1', 'R1', 1).document
+        branch_r1 = read_handoff(branch, shift_day)
+        r2 = return_quota(branch, shift_day, 'G1', 'R2', 1).document
+        stage(hub, shift_day, '空班报', '总仓原表', [])
+        publish_batch(hub, shift_day, '空班报', 'Z')
+        settle_return(hub, r2)
+        settle_return(hub, r2)
+        g2 = grant(hub, shift_day, 'G2', branch_id, 2)
+        hub_g2 = read_handoff(hub, shift_day)
+        accept_grant(branch, g2)
+        stage(branch, shift_day, '补报', '北岸补报原表', [(17, 7000, 'ml')])
+        try:
+            publish_batch(branch, shift_day, '补报', 'B', 'G2', before_commit=interrupt_commit)
+        except RuntimeError:
+            pass
+        publish_batch(branch, shift_day, '补报', 'B', 'G2')
+        branch_done = read_handoff(branch, shift_day)
+        settle_return(hub, r1)
+        hub_done = read_handoff(hub, shift_day)
+    # 两仓均已关闭，以下只凭交班件 bytes 离线核账。
+    staggered = audit_handoff(shift_day, hub_g2, branch_r1)
+    final = audit_handoff(shift_day, hub_done, branch_done)
+    staggered_g1 = staggered['audit'].quota.grants[0]
+    actual = {'positions': [staggered['hub_position'], staggered['branch_position']],
+              'hub_releases': [record.release_id for record in staggered['hub'].releases],
+              'g2_issued': any(line.grant.grant_id == 'G2' for line in staggered['audit'].quota.grants),
+              'g1_branch_available': staggered_g1.branch_available,
+              'g1_pending_return': staggered_g1.pending_return,
+              'balanced': staggered['audit'].quota.balanced}
+    final_b = final['branch'].releases[0].rows[0]
+    downstream_actual = {'positions': [final['hub_position'], final['branch_position']],
+                         'releases': [record.release_id for record in final['hub'].releases]
+                         + [record.release_id for record in final['branch'].releases],
+                         'joint': list(astuple(final['audit'].joint)),
+                         'in_transit': final['audit'].quota.pending_acceptance
+                         + final['audit'].quota.pending_return,
+                         'b_row': [final_b.litres, final_b.origin.source,
+                                   final_b.origin.source_line, final_b.origin.position],
+                         'balanced': final['audit'].quota.balanced}
+    emit_scenario('shift-offline', {'limit': 2, 'grants': [2, 2], 'returns': [1, 1],
+                                    'receive': ['R2', 'R2', 'R1'], 'z': 'early',
+                                    'packets': ['hub_g2', 'branch_r1', 'hub_done', 'branch_done']},
+                  {'positions': [3, 2], 'hub_releases': ['Z'], 'g2_issued': False,
+                   'g1_branch_available': 1, 'g1_pending_return': 1, 'balanced': True}, actual,
+                  {'positions': [6, 5], 'releases': ['Z', 'B'], 'joint': [1, 0, 7],
+                   'in_transit': 0, 'b_row': [7, '北岸补报原表', 17, 1], 'balanced': True},
+                  downstream_actual,
+                  ['day/handoff.py', 'audit/handoff.py', 'audit/snapshots.py', 'audit/reconcile.py'],
+                  '源仓关闭后凭交班件断源核账：分仓早件只到 R1 时联合前缀退到 (3,2)，'
+                  'Z 保留、G2 未签发、退额 1 行在途；终件核定 (6,5)，B 的 7 升落定，在途清零。')
+
+
 if __name__ == '__main__':
     with TemporaryDirectory() as directory:
         run(Path(directory))
+        run_shift_handoff(Path(directory))

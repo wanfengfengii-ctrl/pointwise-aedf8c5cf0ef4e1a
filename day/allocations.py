@@ -1,5 +1,6 @@
 from day.balance import debit_hub, require_positive
 from day.calendar import check_name, check_station_day
+from day.handoff import GRANT, record_handoff_event
 from exchange.documents import dump_grant, issue_grant_document, load_grant
 
 
@@ -45,4 +46,5 @@ def grant(store, station_day, grant_id, branch_id, count):
         db.execute('INSERT INTO issued_grants VALUES (?, ?, ?, ?)', (
             grant_id, *station_day.key, dump_grant(document)
         ))
+        record_handoff_event(db, station_day, GRANT, grant_id)
         return document

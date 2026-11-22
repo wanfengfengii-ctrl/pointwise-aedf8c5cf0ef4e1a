@@ -35,3 +35,10 @@ def read_day_snapshot(store, station_day):
                                         settlements=list_day_settlements(db, station_day))
         return WarehouseDaySnapshot(*identity, accepted=list_accepted_grants(db, station_day),
                                     returns=list_day_returns(db, station_day))
+
+
+def read_handoff(store, station_day):
+    check_station_day(station_day)
+    from audit.handoff import build_handoff_packet
+    with store.read_snapshot() as db:
+        return build_handoff_packet(store, db, station_day)
